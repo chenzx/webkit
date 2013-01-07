@@ -232,6 +232,125 @@ bool RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumul
     return true;
 }
 
+void RenderEmbeddedObject::computeLogicalHeight()
+{
+    RenderPart::computeLogicalHeight();
+    if (!flattenFrame())
+         return;
+
+    HTMLObjectElement* frame = static_cast<HTMLObjectElement*>(node());
+    bool isScrollable = frame->scrollingMode() != ScrollbarAlwaysOff;
+
+    if (isScrollable || !style()->height().isFixed()) {
+        FrameView* view = static_cast<FrameView*>(widget());
+        if (!view)
+            return;
+        int border = borderTop() + borderBottom();
+        setHeight(max(height(), view->contentsHeight() + border));
+    }
+}
+
+void RenderEmbeddedObject::computeLogicalWidth()
+{
+    RenderPart::computeLogicalWidth();
+    if (!flattenFrame())
+        return;
+
+    HTMLObjectElement* frame = static_cast<HTMLObjectElement*>(node());
+    bool isScrollable = frame->scrollingMode() != ScrollbarAlwaysOff;
+
+    if (isScrollable || !style()->width().isFixed()) {
+        FrameView* view = static_cast<FrameView*>(widget());
+        if (!view)
+            return;
+        int border = borderLeft() + borderRight();
+        setWidth(max(width(), view->contentsWidth() + border));
+    }
+}
+
+bool RenderEmbeddedObject::flattenFrame()
+{
+    if (!node() || !node()->hasTagName(objectTag))
+        return false;
+
+    HTMLObjectElement* element = static_cast<HTMLObjectElement*>(node());
+    bool isScrollable = element->scrollingMode() != ScrollbarAlwaysOff;
+
+    if (style()->width().isFixed() && style()->height().isFixed()) {
+        if (!isScrollable)
+            return false;
+        if (style()->width().value() <= 0 || style()->height().value() <= 0)
+            return false;
+    }
+
+    Frame* frame = element->document()->frame();
+    bool enabled = frame && frame->settings()->frameFlatteningEnabled();
+
+    if (!enabled || !frame->page())
+        return false;
+
+    FrameView* view = frame->page()->mainFrame()->view();
+    if (!view)
+        return false;
+
+    // Do not flatten offscreen inner frames during frame flattening, as flattening might make them visible.
+    IntRect boundingRect = absoluteBoundingBoxRect();
+    return boundingRect.maxX() > 0 && boundingRect.maxY() > 0;
+}
+
+void RenderEmbeddedObject::layoutWithFlattening(bool fixedWidth, bool fixedHeight)
+{
+    FrameView* childFrameView = static_cast<FrameView*>(widget());
+    RenderView* childRoot = childFrameView ? static_cast<RenderView*>(childFrameView->frame()->contentRenderer()) : 0;
+
+    // Do not expand frames which has zero width or height
+    if (!width() || !height() || !childRoot) {
+        updateWidgetPosition();
+        if (childFrameView)
+            childFrameView->layout();
+        setNeedsLayout(false);
+        return;
+    }
+
+    // need to update to calculate min/max correctly
+    updateWidgetPosition();
+    if (childRoot->preferredLogicalWidthsDirty())
+        childRoot->computePreferredLogicalWidths();
+
+    // if scrollbars are off, and the width or height are fixed
+    // we obey them and do not expand. With frame flattening
+    // no subframe much ever become scrollable.
+
+    HTMLObjectElement* element = static_cast<HTMLObjectElement*>(node());
+    bool isScrollable = element->scrollingMode() != ScrollbarAlwaysOff;
+
+    // consider iframe inset border
+    int hBorder = borderLeft() + borderRight();
+    int vBorder = borderTop() + borderBottom();
+
+    // make sure minimum preferred width is enforced
+    if (isScrollable || !fixedWidth) {
+        setWidth(max(width(), childRoot->minPreferredLogicalWidth() + hBorder));
+        // update again to pass the new width to the child frame
+        updateWidgetPosition();
+        childFrameView->layout();
+    }
+
+    // expand the frame by setting frame height = content height
+    if (isScrollable || !fixedHeight || childRoot->isFrameSet())
+        setHeight(max(height(), childFrameView->contentsHeight() + vBorder));
+    if (isScrollable || !fixedWidth || childRoot->isFrameSet())
+        setWidth(max(width(), childFrameView->contentsWidth() + hBorder));
+
+    updateWidgetPosition();
+
+    ASSERT(!childFrameView->layoutPending());
+    ASSERT(!childRoot->needsLayout());
+    ASSERT(!childRoot->firstChild() || !childRoot->firstChild()->firstChild() || !childRoot->firstChild()->firstChild()->needsLayout());
+
+    setNeedsLayout(false);
+}
+
 void RenderEmbeddedObject::layout()
 {
     StackStats::LayoutCheckPoint layoutCheckPoint;
@@ -241,8 +360,13 @@ void RenderEmbeddedObject::layout()
     LayoutSize oldSize = contentBoxRect().size();
 #endif
 
-    updateLogicalWidth();
-    updateLogicalHeight();
+    RenderPart::computeLogicalWidth();
+    RenderPart::computeLogicalHeight();
+
+    if (flattenFrame()) {
+        layoutWithFlattening(style()->width().isFixed(), style()->height().isFixed());
+        return;
+    }
 
     RenderPart::layout();
 
