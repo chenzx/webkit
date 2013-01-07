@@ -72,6 +72,15 @@ protected:
     virtual void layout() OVERRIDE;
 
 private:
+    //Code merged from RenderIFrame.cpp:
+    virtual void computeLogicalHeight();
+    virtual void computeLogicalWidth();
+    bool flattenFrame();
+    //Code merged from RenderFrameBase.cpp:
+    void layoutWithFlattening(bool fixedWidth, bool fixedHeight);
+
+
+private:
     virtual const char* renderName() const { return "RenderEmbeddedObject"; }
     virtual bool isEmbeddedObject() const { return true; }
 
