@@ -3118,6 +3118,13 @@ bool FrameView::isInChildFrameWithFrameFlattening() const
         if (iframeRenderer->flattenFrame() || iframeRenderer->isSeamless())
             return true;
     }
+    
+    //treat <object data="a.html"/> the same like <iframe src="a.html"/>
+    if (m_frame->ownerElement()->hasTagName(objectTag)) {
+        RenderEmbeddedObject* objectRenderer = toRenderEmbeddedObject(m_frame->ownerElement()->renderPart());
+        if (objectRenderer->flattenFrame())
+            return true;
+    }
 
     if (!m_frame->settings() || !m_frame->settings()->frameFlatteningEnabled())
         return false;
